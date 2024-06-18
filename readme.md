@@ -519,3 +519,165 @@ END {
 
 ### Capture d'écran d'execution
 ![Texte alternatif](calcul2.png)
+
+# TP03
+
+## Description Générale du Code
+Le code dans le notebook fourni effectue les étapes suivantes :
+
+### 1 Importation des bibliothèques nécessaires :
+
+- Charge les bibliothèques pour la manipulation des données (pandas), la modélisation (xgboost), l'évaluation (sklearn.metrics), et la visualisation (matplotlib, seaborn).
+
+
+### 2 Chargement et Préparation des Données :
+
+- Charge les données de suivi de paquets à partir d'un fichier CSV.
+
+- Filtre et transforme les données pour obtenir un jeu de données utilisable pour la modélisation. Cela inclut la suppression des événements inutiles et la création de nouvelles colonnes (time_x, time_y, size, event).
+
+### 3 Division des Données :
+
+- Sépare les données en ensembles d'entraînement et de test.
+- Définit les caractéristiques (features) et la variable cible pour l'entraînement du modèle.
+
+### 4 Entraînement du Modèle XGBoost :
+
+- Initialise et entraîne un modèle de régression XGBoost sur les données d'entraînement.
+- Utilise la validation croisée pour ajuster le modèle et éviter le surapprentissage.
+
+### 5 Évaluation de l'Importance des Caractéristiques :
+
+- Calcule et affiche l'importance des caractéristiques utilisées par le modèle pour effectuer ses prédictions.
+
+### 6 Prédiction et Visualisation :
+
+- Utilise le modèle entraîné pour prédire les valeurs de la variable cible sur l'ensemble de test.
+- Compare les prédictions aux valeurs réelles et affiche les résultats sous forme de graphique.
+
+### 7 Calcul de la Précision :
+
+- Calcule et affiche la précision du modèle en arrondissant les prédictions pour obtenir des valeurs binaires (0 ou 1).
+
+## pourquoi le résultat arrivant à 85% de précision est en vrai très mauvais
+
+### 1 Déséquilibre des Classes :
+
+Lorsque les données sont fortement déséquilibrées, avec une majorité de paquets reçus correctement et une minorité de paquets perdus, un modèle peut facilement atteindre une précision élevée en prédisant simplement la classe majoritaire. Par exemple, si 85% des paquets sont reçus correctement, un modèle qui prédit toujours "paquet reçu" atteindra une précision de 85%. Cependant, cela ne signifie pas que le modèle est efficace pour détecter les pertes de paquets.
+
+### 2 Surapprentissage (Overfitting) :
+
+Le modèle peut sembler performant sur les données de test parce qu'il a mémorisé les spécificités de ces données, plutôt que d'apprendre des tendances générales. Cela signifie qu'il ne se généralisera pas bien à de nouvelles données. Un bon modèle doit capturer des tendances générales et être capable de faire des prédictions précises sur des données qu'il n'a jamais vues auparavant.
+
+### 3 Erreur de Mesure :
+
+La précision est une mesure simpliste qui ne prend pas en compte les faux positifs et les faux négatifs. Dans des situations où les coûts des erreurs sont différents (par exemple, lorsque manquer une perte de paquet est plus coûteux que prédire une perte incorrecte), des métriques comme la précision (precision), le rappel (recall) et le F1-score sont plus appropriées. Ces métriques offrent une vue plus complète de la performance du modèle en équilibrant les différents types d'erreurs.
+
+## Le bonus
+
+**Voici une version améliore du code:**
+
+```py
+# Importation des bibliothèques nécessaires
+import pandas as pd
+import xgboost as xgb
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+import matplotlib.pyplot as plt
+import seaborn as sns
+color_pal = sns.color_palette()
+plt.style.use('fivethirtyeight')
+
+# Chargement des données
+cols = ["event", "time", "size", "id"]
+df = pd.read_csv('log_ns2.csv', header=None, sep=';', names=cols)
+df = df[df["event"] != '-']  # Supprimer les sorties de file
+
+# Séparer les données d'arrivée et de résultat
+df_Arr = df[df["event"] == '+'].drop("event", axis=1)
+df_Res = df[df["event"] != '+'].drop("size", axis=1)
+
+# Fusionner les jeux de données
+dataset = pd.merge(df_Arr, df_Res, on="id").drop("id", axis=1)
+dataset = dataset.replace({'r': 1, 'd': 0})
+
+# Ajout de nouvelles caractéristiques
+dataset['latency'] = dataset['time_y'] - dataset['time_x']
+dataset['previous_time'] = dataset['time_x'].shift(1)
+dataset['time_diff'] = dataset['time_x'] - dataset['previous_time']
+dataset = dataset.fillna(0)  # Remplacer les NaN par 0
+
+# Séparation des données en ensembles d'entraînement et de test
+train = dataset[dataset.index < 1500]
+test = dataset[dataset.index >= 1500]
+
+FEATURES = ['time_x', 'time_y', 'size', 'latency', 'time_diff']
+TARGET = 'event'
+
+X_train = train[FEATURES]
+y_train = train[TARGET]
+
+X_test = test[FEATURES]
+y_test = test[TARGET]
+
+# Entraînement du modèle XGBoost avec optimisation des hyperparamètres
+param_grid = {
+    'n_estimators': [100, 300, 500],
+    'max_depth': [3, 5, 7],
+    'learning_rate': [0.01, 0.1, 0.2]
+}
+
+grid_search = GridSearchCV(estimator=xgb.XGBClassifier(), param_grid=param_grid, scoring='accuracy', cv=3, verbose=1)
+grid_search.fit(X_train, y_train)
+
+# Meilleurs hyperparamètres
+best_params = grid_search.best_params_
+print("Meilleurs hyperparamètres :", best_params)
+
+# Entraînement du modèle avec les meilleurs hyperparamètres
+model = xgb.XGBClassifier(**best_params)
+model.fit(X_train, y_train)
+
+# Prédictions
+y_pred = model.predict(X_test)
+
+# Évaluation du modèle
+accuracy = accuracy_score(y_test, y_pred)
+precision = precision_score(y_test, y_pred)
+recall = recall_score(y_test, y_pred)
+f1 = f1_score(y_test, y_pred)
+
+print(f"Accuracy: {accuracy * 100:.2f}%")
+print(f"Precision: {precision * 100:.2f}%")
+print(f"Recall: {recall * 100:.2f}%")
+print(f"F1 Score: {f1 * 100:.2f}%")
+
+# Importance des caractéristiques
+fi = pd.DataFrame(data=model.feature_importances_, index=FEATURES, columns=['importance'])
+fi.sort_values('importance').plot(kind='barh', title='Importance des caractéristiques')
+plt.show()
+```
+**Les résultats sont :**
+![Texte alternatif](new_results.png)
+
+### Explications des Améliorations
+**1 Ajout de nouvelles caractéristiques :**
+
+- **latency** : temps entre l'envoi et la réception, pour capturer les délais.
+- **time_diff** : temps depuis le dernier paquet, pour capturer les intervalles entre les paquets.
+
+
+**2 Optimisation des hyperparamètres :**
+
+- Utilisation de GridSearchCV pour trouver les meilleurs paramètres du modèle.
+
+**Utilisation de métriques d'évaluation avancées :**
+
+- Calcul de la précision, du rappel et du F1-score en plus de la précision pour mieux évaluer la performance du modèle.
+
+Ces améliorations devraient aider à obtenir un modèle plus robuste et capable de mieux généraliser aux nouvelles données, tout en fournissant une évaluation plus complète de sa performance.
+
+
+
+
+
